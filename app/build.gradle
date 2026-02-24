@@ -1,0 +1,36 @@
+apply plugin: 'com.android.application'
+
+android {
+    compileSdk sdk_compileSdk
+
+    defaultConfig {
+        applicationId 'tv.huan.demo'
+        minSdk sdk_minSdk
+        targetSdk sdk_targetSdk
+        versionCode 100
+        versionName '1.0.0'
+
+        multiDexEnabled true
+    }
+
+    buildTypes {
+        debug {
+            minifyEnabled false
+            debuggable true
+           signingConfig signingConfigs.debug
+        }
+        release {
+            minifyEnabled false
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+           signingConfig signingConfigs.debug
+        }
+    }
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_1_8
+        targetCompatibility JavaVersion.VERSION_1_8
+    }
+}
+
+dependencies {
+    compileOnly 'com.extscreen.runtime:eskit:2.6.0'
+}
