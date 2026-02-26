@@ -38,5 +38,6 @@ android {
 }
 
 dependencies {
-    compileOnly 'com.extscreen.runtime:eskit:2.6.0'
+    devCompileOnly 'com.extscreen.runtime:eskit:2.6.0'
+    generalImplementation 'com.extscreen.runtime:eskit:2.6.0'
 }
