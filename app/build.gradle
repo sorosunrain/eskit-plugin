@@ -17,12 +17,12 @@ android {
         debug {
             minifyEnabled false
             debuggable true
-           signingConfig signingConfigs.debug
+            signingConfig signingConfigs.debug
         }
         release {
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
-           signingConfig signingConfigs.debug
+            signingConfig signingConfigs.debug
         }
     }
     compileOptions {
@@ -39,8 +39,8 @@ android {
 
     flavorDimensions += "channel"
     productFlavors {
-        dev{}
-        general{}
+        dev {}
+        general {}
     }
 }
 
@@ -52,24 +52,17 @@ dependencies {
     implementation 'eskit.sdk.support.so:ijk-player-0.88-armeabi-v7a:1.0.1'
 }
 
-def assembleAllWithSoZipsTask = tasks.register("assembleAllWithSoZips") {
-    group = "build"
-    description = "Assemble all APK variants and generate ABI zip files."
-}
-
 android.applicationVariants.all { variant ->
     def variantName = variant.name
     def variantNameCap = variantName.capitalize()
     def assembleTaskName = "assemble${variantNameCap}"
     def zipTaskName = "package${variantNameCap}SoZips"
-    def taskName = "${assembleTaskName}WithSoZips"
 
     def zipTask = tasks.register(zipTaskName) {
         group = "build"
         description = "Generate ABI zip files for ${variantName} (armeabi.zip, armeabi-v7a.zip, arm64-v8a.zip...)."
 
-        def variantResultDir = rootProject.file("build")
-        def apkDir = file("$buildDir/outputs/apk/${variant.dirName}")
+        def variantResultDir = file("$buildDir/outputs/zip/${variant.dirName}")
 
         doFirst {
             // 每次任务开始都清理该 variant 在根目录 build 下的结果目录
@@ -81,8 +74,7 @@ android.applicationVariants.all { variant ->
 
         doLast {
             def abiRegex = ~/.*\/(armeabi|armeabi-v7a|arm64-v8a|x86|x86_64|mips|mips64)\/[^\/]+\.so$/
-            def tempDir = rootProject.file("${rootProject.buildDir}/tmp")
-            def tempSoDir = rootProject.file("${tempDir}/so-zips/${variantName}")
+            def tempSoDir = rootProject.file("${buildDir}/tmp/so-zips/${variantName}")
             if (tempSoDir.exists()) {
                 delete tempSoDir
             }
@@ -165,23 +157,7 @@ android.applicationVariants.all { variant ->
                 if (generatedCount == 0) {
                     logger.lifecycle("No native so files found for variant '${variantName}'.")
                 }
-
-                def apkFiles = fileTree(apkDir) {
-                    include '*.apk'
-                }
-                if (apkFiles.isEmpty()) {
-                    logger.lifecycle("No APK found for variant '${variantName}' in ${apkDir.absolutePath}.")
-                } else {
-                    copy {
-                        from apkFiles
-                        into variantResultDir
-                    }
-                    logger.lifecycle("Copied ${apkFiles.files.size()} APK(s) to ${variantResultDir.absolutePath}")
-                }
             } finally {
-                if (tempDir.exists()) {
-                    delete tempDir
-                }
             }
         }
     }
@@ -190,13 +166,4 @@ android.applicationVariants.all { variant ->
         finalizedBy zipTask
     }
 
-    def variantTask = tasks.register(taskName) {
-        group = "build"
-        description = "Assemble ${variantName} APK and generate ABI zip files (armeabi.zip, armeabi-v7a.zip, arm64-v8a.zip...)."
-        dependsOn assembleTaskName
-    }
-
-    assembleAllWithSoZipsTask.configure {
-        dependsOn variantTask
-    }
 }
