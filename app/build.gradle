@@ -30,6 +30,13 @@ android {
         targetCompatibility JavaVersion.VERSION_1_8
     }
 
+    packagingOptions {
+        jniLibs {
+            // so 不打入 APK，后续由自定义 task 单独打包
+            excludes += ['**/*.so']
+        }
+    }
+
     flavorDimensions += "channel"
     productFlavors {
         dev{}
@@ -40,4 +47,156 @@ android {
 dependencies {
     devImplementation 'com.extscreen.runtime:eskit:2.6.0'
     generalCompileOnly 'com.extscreen.runtime:eskit:2.6.0'
+
+    implementation 'eskit.sdk.support.so:ijk-player-0.88-arm64-v8a:1.0.1'
+    implementation 'eskit.sdk.support.so:ijk-player-0.88-armeabi-v7a:1.0.1'
+}
+
+def assembleAllWithSoZipsTask = tasks.register("assembleAllWithSoZips") {
+    group = "build"
+    description = "Assemble all APK variants and generate ABI zip files."
+}
+
+android.applicationVariants.all { variant ->
+    def variantName = variant.name
+    def variantNameCap = variantName.capitalize()
+    def assembleTaskName = "assemble${variantNameCap}"
+    def zipTaskName = "package${variantNameCap}SoZips"
+    def taskName = "${assembleTaskName}WithSoZips"
+
+    def zipTask = tasks.register(zipTaskName) {
+        group = "build"
+        description = "Generate ABI zip files for ${variantName} (armeabi.zip, armeabi-v7a.zip, arm64-v8a.zip...)."
+
+        def variantResultDir = rootProject.file("build")
+        def apkDir = file("$buildDir/outputs/apk/${variant.dirName}")
+
+        doFirst {
+            // 每次任务开始都清理该 variant 在根目录 build 下的结果目录
+            if (variantResultDir.exists()) {
+                delete variantResultDir
+            }
+            variantResultDir.mkdirs()
+        }
+
+        doLast {
+            def abiRegex = ~/.*\/(armeabi|armeabi-v7a|arm64-v8a|x86|x86_64|mips|mips64)\/[^\/]+\.so$/
+            def tempDir = rootProject.file("${rootProject.buildDir}/tmp")
+            def tempSoDir = rootProject.file("${tempDir}/so-zips/${variantName}")
+            if (tempSoDir.exists()) {
+                delete tempSoDir
+            }
+            tempSoDir.mkdirs()
+
+            try {
+                // 收集本地 jniLibs 目录（main/flavor/buildType/flavorBuildType）
+                def localJniCandidates = [
+                        file("src/main/jniLibs"),
+                        file("src/${variant.flavorName}/jniLibs"),
+                        file("src/${variant.buildType.name}/jniLibs"),
+                        file("src/${variant.dirName}/jniLibs"),
+                ].findAll { it.exists() && it.isDirectory() }
+
+                // 收集 runtime 依赖中的 AAR/JAR/SO，优先从 AAR 的 jni 或 lib 目录提取 so
+                def runtimeArtifacts = variant.runtimeConfiguration?.resolvedConfiguration?.resolvedArtifacts ?: []
+
+                def copySoToAbiDir = { File soFile ->
+                    def normalized = soFile.absolutePath.replace('\\', '/')
+                    def matcher = normalized =~ abiRegex
+                    if (!matcher.matches()) {
+                        return false
+                    }
+                    def abi = matcher.group(1)
+                    def abiDir = new File(tempSoDir, abi)
+                    if (!abiDir.exists()) {
+                        abiDir.mkdirs()
+                    }
+                    copy {
+                        from soFile
+                        into abiDir
+                    }
+                    return true
+                }
+
+                localJniCandidates.each { jniDir ->
+                    fileTree(jniDir) {
+                        include '**/*.so'
+                    }.files.each { soFile ->
+                        copySoToAbiDir(soFile)
+                    }
+                }
+
+                runtimeArtifacts.each { artifact ->
+                    def artifactFile = artifact.file
+                    if (artifactFile == null || !artifactFile.exists()) {
+                        return
+                    }
+
+                    if (artifactFile.name.endsWith('.aar') || artifactFile.name.endsWith('.zip') || artifactFile.name.endsWith('.jar')) {
+                        zipTree(artifactFile).matching {
+                            include 'jni/**/*.so'
+                            include 'lib/**/*.so'
+                            include '**/jni/**/*.so'
+                            include '**/lib/**/*.so'
+                        }.files.each { soFile ->
+                            copySoToAbiDir(soFile)
+                        }
+                    } else if (artifactFile.name.endsWith('.so')) {
+                        copySoToAbiDir(artifactFile)
+                    }
+                }
+
+                def generatedCount = 0
+                tempSoDir.eachDir { abiDir ->
+                    def soFiles = fileTree(abiDir) {
+                        include '**/*.so'
+                    }
+                    if (soFiles.isEmpty()) {
+                        return
+                    }
+                    def zipFile = new File(variantResultDir, "${abiDir.name}.zip")
+                    ant.zip(destfile: zipFile) {
+                        fileset(dir: abiDir, includes: '**/*.so')
+                    }
+                    generatedCount++
+                    logger.lifecycle("Generated ABI zip: ${zipFile.absolutePath}")
+                }
+
+                if (generatedCount == 0) {
+                    logger.lifecycle("No native so files found for variant '${variantName}'.")
+                }
+
+                def apkFiles = fileTree(apkDir) {
+                    include '*.apk'
+                }
+                if (apkFiles.isEmpty()) {
+                    logger.lifecycle("No APK found for variant '${variantName}' in ${apkDir.absolutePath}.")
+                } else {
+                    copy {
+                        from apkFiles
+                        into variantResultDir
+                    }
+                    logger.lifecycle("Copied ${apkFiles.files.size()} APK(s) to ${variantResultDir.absolutePath}")
+                }
+            } finally {
+                if (tempDir.exists()) {
+                    delete tempDir
+                }
+            }
+        }
+    }
+
+    tasks.named(assembleTaskName).configure {
+        finalizedBy zipTask
+    }
+
+    def variantTask = tasks.register(taskName) {
+        group = "build"
+        description = "Assemble ${variantName} APK and generate ABI zip files (armeabi.zip, armeabi-v7a.zip, arm64-v8a.zip...)."
+        dependsOn assembleTaskName
+    }
+
+    assembleAllWithSoZipsTask.configure {
+        dependsOn variantTask
+    }
 }
